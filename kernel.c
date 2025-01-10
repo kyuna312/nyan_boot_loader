@@ -2,6 +2,9 @@
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 
+// Define NULL since we can't use stddef.h
+#define NULL ((void *)0)
+
 #define VIDEO_MEM ((volatile uint16_t *)0xB8000)
 #define COLS 80
 #define ROWS 25
@@ -24,89 +27,70 @@ typedef unsigned short uint16_t;
 #define YELLOW 0xE
 #define WHITE 0xF
 
-// Nyan Cat frames
+// Simple Nyan Cat frames
 static const char *FRAME1[] = {
-    "+~~~~~~~~~~~~~~~~+",
-    "|   NYAN  CAT   |",
-    "+~~~~~~~~~~~~~~~~+",
-    "    ∧___∧    ",
-    "   (=^.^=)   ",
-    "   (\")_(\")",
-    "~^~^~^~^~^~^~^",
-    "+~~~~~~~~~~~~~~~~+",
+    "+-------------+",
+    "| NYAN CAT :3|",
+    "+-------------+",
+    "   /\\___/\\   ",
+    "  (  o o  )  ",
+    "  (  =^=  )  ",
+    "   (______)  ",
     NULL};
 
 static const char *FRAME2[] = {
-    "+~~~~~~~~~~~~~~~~+",
-    "|   NYAN  CAT   |",
-    "+~~~~~~~~~~~~~~~~+",
-    "    ∧___∧    ",
-    "   (=-.-=)   ",
-    "   (\")_(\")",
-    "^~^~^~^~^~^~^~",
-    "+~~~~~~~~~~~~~~~~+",
+    "+-------------+",
+    "| NYAN CAT :3|",
+    "+-------------+",
+    "   /\\___/\\   ",
+    "  (  - -  )  ",
+    "  (  =^=  )  ",
+    "   (______)  ",
     NULL};
 
-static void init_video(void)
+void write_direct(int x, int y, const char *str, uint8_t attr)
 {
-  // Force text mode and clear screen
-  __asm__ volatile(
-      "int $0x10" : : "a"(0x0003) // Set mode 3 (80x25 text)
-  );
+  volatile uint16_t *where = VIDEO_MEM + (y * COLS + x);
+  int i = 0;
+  while (str[i] != '\0')
+  {
+    where[i] = str[i] | (attr << 8);
+    i++;
+  }
+}
 
-  // Set blue background
+void clear_direct(void)
+{
+  volatile uint16_t *vm = VIDEO_MEM;
+  uint16_t blank = ' ' | (((BLUE << 4) | WHITE) << 8);
   for (int i = 0; i < COLS * ROWS; i++)
   {
-    VIDEO_MEM[i] = (BLUE << 12) | (WHITE << 8) | ' ';
+    vm[i] = blank;
   }
 }
 
-static void write_char(int x, int y, char c, uint8_t fg, uint8_t bg)
+void draw_frame_direct(const char **frame, int x, int y, uint8_t attr)
 {
-  if (x >= 0 && x < COLS && y >= 0 && y < ROWS)
+  int i = 0;
+  while (frame[i] != NULL)
   {
-    VIDEO_MEM[y * COLS + x] = (bg << 12) | (fg << 8) | c;
+    write_direct(x, y + i, frame[i], attr);
+    i++;
   }
 }
 
-static void write_string(int x, int y, const char *str, uint8_t fg, uint8_t bg)
+void draw_rainbow_direct(int x, int y)
 {
-  for (int i = 0; str[i]; i++)
-  {
-    write_char(x + i, y, str[i], fg, bg);
-  }
+  const char *wave = "~~~~~~~~~~~~~~~~";
+  write_direct(x, y, wave, (BLUE << 4) | L_RED);
+  write_direct(x, y + 1, wave, (BLUE << 4) | YELLOW);
+  write_direct(x, y + 2, wave, (BLUE << 4) | L_GREEN);
+  write_direct(x, y + 3, wave, (BLUE << 4) | L_CYAN);
 }
 
-static void draw_frame(const char **frame, int x, int y, uint8_t fg, uint8_t bg)
+void delay(int count)
 {
-  for (int i = 0; frame[i] != NULL; i++)
-  {
-    write_string(x, y + i, frame[i], fg, bg);
-  }
-}
-
-static void draw_rainbow(int x, int y)
-{
-  const char *wave = "~^~^~^~^~^~^~^";
-  write_string(x, y, wave, L_RED, BLUE);
-  write_string(x, y + 1, wave, YELLOW, BLUE);
-  write_string(x, y + 2, wave, L_GREEN, BLUE);
-  write_string(x, y + 3, wave, L_CYAN, BLUE);
-  write_string(x, y + 4, wave, L_BLUE, BLUE);
-  write_string(x, y + 5, wave, L_MAG, BLUE);
-}
-
-static void clear_screen(void)
-{
-  for (int i = 0; i < COLS * ROWS; i++)
-  {
-    VIDEO_MEM[i] = (BLUE << 12) | (BLUE << 8) | ' ';
-  }
-}
-
-static void delay(int count)
-{
-  for (volatile int i = 0; i < count * 10000; i++)
+  for (volatile int i = 0; i < count * 100000; i++)
   {
     __asm__ volatile("nop");
   }
@@ -114,30 +98,53 @@ static void delay(int count)
 
 void __attribute__((section(".text.start"))) kernel_main(void)
 {
-  init_video();
+  // Direct video memory test
+  volatile uint16_t *vm = VIDEO_MEM;
+  vm[0] = 'H' | ((BLUE << 4 | WHITE) << 8);
+  vm[1] = 'e' | ((BLUE << 4 | WHITE) << 8);
+  vm[2] = 'l' | ((BLUE << 4 | WHITE) << 8);
+  vm[3] = 'l' | ((BLUE << 4 | WHITE) << 8);
+  vm[4] = 'o' | ((BLUE << 4 | WHITE) << 8);
+
+  delay(10);
+  clear_direct();
 
   int frame = 0;
-  const char **current_frame;
+  const int center_x = (COLS - 13) / 2;
+  const int center_y = (ROWS - 7) / 2;
 
-  // Calculate center position
-  int center_x = (COLS - 16) / 2;
-  int center_y = (ROWS - 8) / 2;
-
+  // Main animation loop
   while (1)
   {
-    clear_screen();
+    // Draw title
+    write_direct(center_x - 5, center_y - 2,
+                 "Welcome to NyanNix!",
+                 (BLUE << 4) | WHITE);
 
-    // Select frame
-    current_frame = (frame % 2 == 0) ? FRAME1 : FRAME2;
+    // Draw current frame
+    if (frame % 2 == 0)
+    {
+      draw_frame_direct(FRAME1, center_x, center_y,
+                        (BLUE << 4) | L_MAG);
+    }
+    else
+    {
+      draw_frame_direct(FRAME2, center_x, center_y,
+                        (BLUE << 4) | L_MAG);
+    }
 
-    // Draw the current frame
-    draw_frame(current_frame, center_x, center_y, L_MAG, BLUE);
+    // Draw rainbow
+    draw_rainbow_direct(center_x - 15, center_y + 3);
 
-    // Draw rainbow trail
-    draw_rainbow(center_x - 8, center_y + 8);
-
-    // Update animation
+    delay(2);
     frame++;
-    delay(5);
+
+    // Clear only the cat area
+    for (int i = 0; i < 7; i++)
+    {
+      write_direct(center_x, center_y + i,
+                   "             ",
+                   (BLUE << 4) | WHITE);
+    }
   }
 }
